@@ -1,0 +1,5 @@
+{
+  "name": "Mizu Elite - ToolTrace AI",
+  "description": "An advanced AI-powered SaaS application that extracts software stacks, tools, and frameworks from YouTube videos using Gemini 2.0/3.0 models and Supadata.",
+  "requestFramePermissions": []
+}
