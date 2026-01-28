@@ -48,7 +48,7 @@ export enum AnalysisStep {
   FAILED = 'FAILED'
 }
 
-export type ViewState = 'SCAN' | 'LIBRARY' | 'DASHBOARD';
+export type ViewState = 'SCAN' | 'LIBRARY' | 'DASHBOARD' | 'MCP';
 
 export interface ChatMessage {
   role: 'user' | 'model';

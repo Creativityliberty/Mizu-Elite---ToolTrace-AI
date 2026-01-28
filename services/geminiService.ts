@@ -13,21 +13,63 @@ export const extractToolsWithAI = async (chunks: TranscriptChunk[]): Promise<Ext
     ? chunks.slice(0, 500).map((c, i) => `[${Math.floor(c.offset || 0)}s] ${c.text || ''}`).join(' ')
     : '';
 
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: [{ parts: [{ text: `Analysez ce transcript. Extrayez les outils techniques avec leurs timestamps. Vérifiez les URLs via l'outil Google Search. Transcript: ${transcriptWithTime}` }] }],
-      config: {
+  const promptText = `Analysez ce transcript. Extrayez les outils techniques avec leurs timestamps. Vérifiez les URLs via l'outil Google Search. Transcript: ${transcriptWithTime}`;
+
+  const attemptGeneration = async (retryCount = 0): Promise<any> => {
+    try {
+      // Disable tools on the last retry (attempt 2) to maximize chance of success if search is causing 500s
+      const useTools = retryCount < 2; 
+      
+      const config: any = {
         systemInstruction: SYSTEM_PROMPT,
         responseMimeType: "application/json",
-        // Enable Google Search for grounding and finding repo URLs
-        tools: [{ googleSearch: {} }],
         temperature: 0.15,
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+        ],
+      };
+
+      if (useTools) {
+        config.tools = [{ googleSearch: {} }];
       }
-    });
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: [{ parts: [{ text: promptText }] }],
+        config
+      });
+
+      return response;
+    } catch (e: any) {
+      // Check for 500 or 503 errors (Internal or Service Unavailable)
+      const isServerSideError = 
+        e.message?.includes('500') || 
+        e.message?.includes('503') || 
+        e.message?.includes('Internal error') ||
+        e.status === 500 || 
+        e.status === 503;
+
+      if (retryCount < 2 && isServerSideError) {
+        console.warn(`Gemini Server Error (${e.status || '500'}), retrying (attempt ${retryCount + 1})...`);
+        // Exponential backoff: 2s, 4s
+        await new Promise(resolve => setTimeout(resolve, 2000 * Math.pow(2, retryCount)));
+        return attemptGeneration(retryCount + 1);
+      }
+      throw e;
+    }
+  };
+
+  try {
+    const response = await attemptGeneration();
 
     const rawText = response.text;
-    if (!rawText) throw new Error("Le moteur neural n'a retourné aucun texte.");
+    if (!rawText) {
+        console.warn("Gemini response missing text. Candidate info:", response.candidates?.[0]);
+        throw new Error("Le moteur neural n'a retourné aucun texte (blocage sécurité ou erreur modèle).");
+    }
     
     // Sometimes the model adds markdown code blocks despite MimeType, handle cleanup
     const cleanJson = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -36,7 +78,17 @@ export const extractToolsWithAI = async (chunks: TranscriptChunk[]): Promise<Ext
     try {
         parsed = JSON.parse(cleanJson);
     } catch (e) {
-        throw new Error("Format JSON invalide reçu de l'IA.");
+        // Fallback: try to find JSON object if there is conversational text
+        const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            try {
+                parsed = JSON.parse(jsonMatch[0]);
+            } catch (innerE) {
+                throw new Error("Format JSON invalide reçu de l'IA.");
+            }
+        } else {
+            throw new Error("Format JSON invalide reçu de l'IA.");
+        }
     }
     
     if (!parsed.tools) parsed.tools = [];
@@ -61,6 +113,10 @@ export const extractToolsWithAI = async (chunks: TranscriptChunk[]): Promise<Ext
     };
   } catch (e: any) {
     console.error("Erreur Gemini (Extraction):", e);
+    // Return a more user-friendly error message for the UI
+    if (e.message?.includes('500') || e.message?.includes('Internal error')) {
+        throw new Error("Le service d'IA est temporairement surchargé (Erreur 500). Veuillez réessayer dans quelques instants.");
+    }
     throw e;
   }
 };

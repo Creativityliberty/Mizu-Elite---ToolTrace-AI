@@ -25,6 +25,22 @@ const pruneArchiveData = (items: ExtractionResult[]): ExtractionResult[] => {
   });
 };
 
+const toGitMcpUrl = (url: string): string | null => {
+  try {
+    const urlObj = new URL(url);
+    if (urlObj.hostname === 'github.com') {
+      return `https://gitmcp.io${urlObj.pathname}`;
+    }
+    if (urlObj.hostname.endsWith('.github.io')) {
+      const sub = urlObj.hostname.replace('.github.io', '');
+      return `https://${sub}.gitmcp.io${urlObj.pathname}`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 export default function App() {
   const [activeView, setActiveView] = useState<ViewState>('SCAN');
   const [url, setUrl] = useState('');
@@ -34,6 +50,11 @@ export default function App() {
   const [archive, setArchive] = useState<ExtractionResult[]>([]);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   
+  // MCP State
+  const [mcpFormat, setMcpFormat] = useState<'markdown' | 'json'>('markdown');
+  const [generatingMcp, setGeneratingMcp] = useState(false);
+  const [mcpResult, setMcpResult] = useState<string | null>(null);
+
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -189,6 +210,41 @@ export default function App() {
     }
   };
 
+  const handleGenerateMcp = () => {
+    if (!currentExtraction) return;
+    setGeneratingMcp(true);
+    setMcpResult(null);
+
+    // Simulate Agent processing time
+    setTimeout(() => {
+        const relevantTools = currentExtraction.tools.filter(t => t.githubUrl);
+        
+        if (mcpFormat === 'markdown') {
+            const lines = relevantTools.map(t => {
+                const mcpUrl = toGitMcpUrl(t.githubUrl!);
+                return `## ${t.name}\n- **Original**: ${t.githubUrl}\n- **MCP Server**: \`${mcpUrl}\`\n`;
+            });
+            const content = `# GitMCP Configuration\n\nGenerated for: ${currentExtraction.video?.title}\n\n${lines.join('\n')}`;
+            setMcpResult(content);
+        } else {
+            const configObj = {
+                "mcpServers": relevantTools.reduce((acc, t) => {
+                    const mcpUrl = toGitMcpUrl(t.githubUrl!);
+                    if (mcpUrl) {
+                        acc[t.normalized || t.name.toLowerCase().replace(/\s+/g, '-')] = {
+                            "command": "npx",
+                            "args": ["-y", "@modelcontextprotocol/server-gitmcp", mcpUrl]
+                        };
+                    }
+                    return acc;
+                }, {} as Record<string, any>)
+            };
+            setMcpResult(JSON.stringify(configObj, null, 2));
+        }
+        setGeneratingMcp(false);
+    }, 1500);
+  };
+
   const stats = useMemo(() => {
     if (!archive || !archive.length) return { totalUniqueTools: 0, categories: {}, mostMentioned: [] };
     const allTools = archive.filter(Boolean).flatMap(a => (Array.isArray(a.tools) ? a.tools : []));
@@ -228,11 +284,12 @@ export default function App() {
           <span className="text-2xl font-black text-[#0a0f1d] outfit tracking-tighter">mizu.elite</span>
         </div>
         <div className="flex items-center gap-2 bg-white/50 backdrop-blur-md p-1.5 rounded-3xl border border-white/50 shadow-sm overflow-x-auto no-scrollbar">
-          {(['SCAN', 'LIBRARY', 'DASHBOARD'] as ViewState[]).map(v => (
+          {(['SCAN', 'LIBRARY', 'DASHBOARD', 'MCP'] as ViewState[]).map(v => (
             <button key={v} onClick={() => setActiveView(v)} className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-3 transition-all ${activeView === v ? 'bg-[#0a0f1d] text-white shadow-lg' : 'text-slate-400 hover:text-[#0a0f1d]'}`}>
               {v === 'SCAN' && <ICONS.Search />}
               {v === 'LIBRARY' && <ICONS.FileJson />}
               {v === 'DASHBOARD' && <div className="w-2 h-2 bg-blue-500 rounded-full" />}
+              {v === 'MCP' && <ICONS.Server />}
               {v}
             </button>
           ))}
@@ -361,6 +418,83 @@ export default function App() {
                       ))}
                       {Object.keys(stats?.categories || {}).length === 0 && (
                         <div className="w-full flex items-center justify-center h-full text-slate-200 font-black uppercase text-[10px] tracking-widest">Aucune donnée</div>
+                      )}
+                   </div>
+                </div>
+             </div>
+          </div>
+        )}
+
+        {activeView === 'MCP' && (
+          <div className="animate-reveal pb-20">
+             <div className="flex flex-col lg:flex-row gap-20">
+                <div className="lg:w-1/3">
+                  <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900 border border-slate-800 mb-8">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                    </span>
+                    <span className="text-[10px] font-black text-white uppercase tracking-widest">MCP Agent Online</span>
+                  </div>
+                  <h2 className="text-6xl font-black text-[#0a0f1d] tracking-tighter outfit leading-none mb-8">MCP <br/><span className="text-slate-300">Linker.</span></h2>
+                  <p className="text-lg text-slate-500 font-medium leading-relaxed mb-12">
+                    Transformez instantanément n'importe quel dépôt GitHub en serveur <strong>Model Context Protocol (MCP)</strong>.
+                    Compatible avec Claude, Cursor et Windsurf.
+                  </p>
+                  
+                  <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-xl mb-8">
+                     <h3 className="text-sm font-black uppercase tracking-widest mb-6">Format de Sortie</h3>
+                     <div className="flex p-1 bg-slate-100 rounded-xl mb-6">
+                        <button onClick={() => setMcpFormat('markdown')} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${mcpFormat === 'markdown' ? 'bg-white shadow-sm text-[#0a0f1d]' : 'text-slate-400'}`}>Markdown</button>
+                        <button onClick={() => setMcpFormat('json')} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${mcpFormat === 'json' ? 'bg-white shadow-sm text-[#0a0f1d]' : 'text-slate-400'}`}>JSON Config</button>
+                     </div>
+                     <button 
+                        onClick={handleGenerateMcp}
+                        disabled={generatingMcp || !currentExtraction}
+                        className="w-full py-4 bg-[#0a0f1d] text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-3"
+                     >
+                        {generatingMcp ? <ICONS.Loader /> : <ICONS.Server />}
+                        {generatingMcp ? 'Transformation...' : 'Demander à l\'Agent'}
+                     </button>
+                  </div>
+                  
+                  <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest pl-4 border-l-2 border-slate-200">
+                    <p className="mb-2">github.com → gitmcp.io</p>
+                    <p>github.io → gitmcp.io</p>
+                  </div>
+                </div>
+
+                <div className="lg:w-2/3">
+                   <div className="bg-[#1e1e1e] rounded-[3rem] p-10 min-h-[600px] shadow-2xl relative overflow-hidden flex flex-col">
+                      <div className="flex items-center justify-between mb-8 pb-8 border-b border-white/10">
+                         <div className="flex gap-2">
+                            <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                            <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                            <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                         </div>
+                         <div className="text-[10px] font-mono text-white/30 uppercase tracking-widest">generated_config.{mcpFormat === 'json' ? 'json' : 'md'}</div>
+                      </div>
+                      
+                      <div className="flex-1 font-mono text-sm text-slate-300 overflow-auto whitespace-pre-wrap leading-relaxed no-scrollbar">
+                         {mcpResult ? (
+                            mcpResult
+                         ) : (
+                            <div className="h-full flex flex-col items-center justify-center text-white/10">
+                               <div className="scale-150 mb-6 opacity-20"><ICONS.Server /></div>
+                               <p className="uppercase tracking-[0.2em] font-black text-[10px]">En attente de l'agent...</p>
+                            </div>
+                         )}
+                      </div>
+
+                      {mcpResult && (
+                          <div className="pt-6 mt-6 border-t border-white/10 flex justify-end">
+                             <button 
+                                onClick={() => { navigator.clipboard.writeText(mcpResult); alert('Config copiée !'); }}
+                                className="px-6 py-3 bg-white text-black rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-colors"
+                             >
+                                Copier la Config
+                             </button>
+                          </div>
                       )}
                    </div>
                 </div>

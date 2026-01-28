@@ -45,7 +45,9 @@ export const ToolCard: React.FC<ToolCardProps> = ({ tool, index, videoId }) => {
         </div>
         <h3 className="text-2xl font-extrabold text-[#0a0f1d] mb-1 tracking-tighter outfit leading-none pt-4">{tool.name}</h3>
         <p className="text-[10px] text-slate-300 font-bold mb-5 outfit tracking-widest uppercase">Node Identifié</p>
-        <p className="text-sm text-slate-500 font-medium mb-8 leading-relaxed line-clamp-3">{tool.notes?.[0] || "Aucune description technique disponible."}</p>
+        <p className="text-sm text-slate-500 font-medium mb-8 leading-relaxed line-clamp-3">
+          {tool.notes && tool.notes.length > 0 && tool.notes[0] ? tool.notes[0] : "No technical description available."}
+        </p>
         <div className="mt-auto pt-6 border-t border-slate-50 flex items-center justify-between">
           <div className="flex flex-col">
             <span className="text-[20px] font-black text-[#0a0f1d] leading-none outfit">{tool.mentionsCount || 0}</span>
